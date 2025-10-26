@@ -1,0 +1,27 @@
+[project]
+name = "eittel"
+version = "0.1.0"
+description = "Personal utilities library for Google Agent Development Kit (ADK) with persistent OAuth for Google Workspace APIs"
+readme = "README.md"
+requires-python = ">=3.12"
+
+dependencies = [
+    "google-adk>=1.17.0",
+    "google-auth>=2.27.0",
+    "google-auth-oauthlib>=1.2.0",
+    "google-auth-httplib2>=0.2.0",
+    "google-api-python-client>=2.116.0",
+    "redis",
+]
+
+[project.optional-dependencies]
+firestore = [
+    "google-cloud-firestore>=2.14.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/eittel"]
