@@ -2,165 +2,61 @@
 Gmail Tools for Google ADK
 
 This module provides ADK-compatible Gmail tools with persistent OAuth credential management.
+No experimental dependencies - production ready.
 """
 
 from typing import Optional
-from google.adk.tools.google_tool import GoogleTool
-from google.adk.tools._google_credentials import BaseGoogleCredentialsConfig
-from google.adk.tools.tool_context import ToolContext
-from googleapiclient.discovery import build
 
-from ...gsuite.gmail.client import GmailClient
 from ...gsuite.auth import (
-    get_credential_store,
-    get_credential_cache,
-    GMAIL_SEND_SCOPE,
-    GMAIL_READONLY_SCOPE,
-    GMAIL_MODIFY_SCOPE,
-    GMAIL_COMPOSE_SCOPE,
     BASE_SCOPES,
+    GMAIL_COMPOSE_SCOPE,
+    GMAIL_MODIFY_SCOPE,
+    GMAIL_READONLY_SCOPE,
+    GMAIL_SEND_SCOPE,
 )
+from ...gsuite.gmail.client import GmailClient
+from .base_google_tool import EittelGoogleTool
 
 
-class PersistentGmailTool(GoogleTool):
+class PersistentGmailTool(EittelGoogleTool):
     """
-    Base class for Gmail tools with persistent credential storage.
+    Gmail tool with persistent credential storage.
 
-    Unlike ADK's default GoogleTool, this uses our persistent credential
-    system (file or Firestore) so users don't have to re-authenticate
-    on every session.
+    This tool loads pre-authorized credentials from Firestore/file storage.
+    Users must be authorized via your web application before using these tools.
 
     Features:
     - Credentials persist across sessions
     - Survives server restarts
     - L1 cache (memory) + L2 storage (file/Firestore)
     - Automatic token refresh
+    - Multi-user support
+    - No experimental ADK dependencies
     """
 
-    def __init__(
-        self,
-        func,
-        credentials_config: BaseGoogleCredentialsConfig,
-        tool_settings=None,
-    ):
+    def __init__(self, func, scopes: list[str]):
         """
         Initialize the persistent Gmail tool.
 
         Args:
             func: The tool function to execute
-            credentials_config: ADK credentials configuration
-            tool_settings: Optional tool settings
+            scopes: OAuth scopes required for Gmail access
         """
-        super().__init__(func, credentials_config=credentials_config, tool_settings=tool_settings)
-        # Hide the 'gmail' parameter from the agent (LLM doesn't need to see it)
-        self._ignore_params.append("gmail")
-        self.credential_store = get_credential_store()
-        self.credential_cache = get_credential_cache()
-
-    async def _get_valid_credentials(self, tool_context: ToolContext):
-        """
-        Get valid credentials using our persistent storage.
-
-        Flow:
-        1. Get actual user from tool_context
-        2. Check L1 cache (memory)
-        3. Check L2 storage (file/Firestore)
-        4. Try to refresh if expired
-        5. Fall back to ADK's OAuth flow if needed
-
-        Args:
-            tool_context: ADK tool context
-
-        Returns:
-            Valid credentials or None if OAuth flow is needed
-        """
-        # Get the actual user making this request
-        user_id = tool_context.invocation_context.user_id
-        if not user_id:
-            raise ValueError("Cannot identify user: tool_context.invocation_context.user_id is None")
-
-        # L1: Check in-memory cache
-        creds = self.credential_cache.get(user_id)
-        if creds and creds.valid:
-            return creds
-
-        # L2: Check persistent storage
-        creds = self.credential_store.get_credential(user_id)
-        if creds:
-            if creds.valid:
-                # Cache for next time
-                self.credential_cache.set(user_id, creds)
-                return creds
-
-            # Try to refresh
-            if creds.expired and creds.refresh_token:
-                try:
-                    from google.auth.transport.requests import Request
-                    creds.refresh(Request())
-                    # Save refreshed credentials
-                    self.credential_store.store_credential(user_id, creds)
-                    self.credential_cache.set(user_id, creds)
-                    return creds
-                except Exception as e:
-                    # Refresh failed, fall through to ADK OAuth
-                    pass
-
-        # L3: Use ADK's OAuth flow
-        creds = await self._credentials_manager.get_valid_credentials(tool_context)
-
-        # Save to our persistent storage
-        if creds:
-            self.credential_store.store_credential(user_id, creds)
-            self.credential_cache.set(user_id, creds)
-
-        return creds
-
-    async def run_async(self, args: dict, tool_context: ToolContext):
-        """
-        Execute the tool with credential handling.
-
-        Args:
-            args: Tool arguments from the agent
-            tool_context: ADK tool execution context
-
-        Returns:
-            Tool execution result
-        """
-        try:
-            # Get valid credentials
-            credentials = await self._get_valid_credentials(tool_context)
-
-            if credentials is None:
-                return (
-                    "User authorization is required to access Gmail. "
-                    "Please complete the authorization flow."
-                )
-
-            # Build Gmail service
-            service = build('gmail', 'v1', credentials=credentials)
-
-            # Create Gmail client
-            gmail_client = GmailClient(service)
-
-            # Execute the tool function with the client
-            return await self.func(gmail_client, **args)
-
-        except Exception as ex:
-            return {
-                "status": "ERROR",
-                "error_details": str(ex),
-            }
+        super().__init__(
+            func=func,
+            scopes=scopes,
+            service_name="gmail",
+            service_version="v1",
+            hidden_param_name="gmail",
+        )
 
 
 # ==============================================================================
 # Gmail Tool Functions (What ADK registers and the agent sees)
 # ==============================================================================
 
-async def search_gmail_messages(
-    gmail: GmailClient,
-    query: str,
-    page_size: int = 10
-) -> str:
+
+async def search_gmail_messages(gmail: GmailClient, query: str, page_size: int) -> str:
     """
     Search messages in Gmail based on a query.
 
@@ -176,13 +72,12 @@ async def search_gmail_messages(
         - "subject:invoice after:2024/01/01" - Invoices from this year
         - "has:attachment larger:5M" - Emails with large attachments
     """
+    if not page_size:
+        page_size = 10
     return await gmail.search_messages(query=query, page_size=page_size)
 
 
-async def get_gmail_message_content(
-    gmail: GmailClient,
-    message_id: str
-) -> str:
+async def get_gmail_message_content(gmail: GmailClient, message_id: str) -> str:
     """
     Get the full content of a specific Gmail message.
 
@@ -201,7 +96,7 @@ async def send_gmail_message(
     subject: str,
     body: str,
     cc: Optional[str] = None,
-    bcc: Optional[str] = None
+    bcc: Optional[str] = None,
 ) -> str:
     """
     Send an email via Gmail.
@@ -216,79 +111,75 @@ async def send_gmail_message(
     Returns:
         Success message with sent message ID
     """
-    return await gmail.send_message(
-        to=to,
-        subject=subject,
-        body=body,
-        cc=cc,
-        bcc=bcc
-    )
+    return await gmail.send_message(to=to, subject=subject, body=body, cc=cc, bcc=bcc)
 
 
 # ==============================================================================
 # Tool Registration Helper
 # ==============================================================================
 
-def create_gmail_tools(
-    client_id: str,
-    client_secret: str
-) -> list:
+
+def create_gmail_tools(include: Optional[list[str]] = None) -> list:
     """
     Create Gmail tools for ADK with persistent credential storage.
+
+    Users must be pre-authorized via your web application. This function
+    creates tools that load existing credentials from Firestore/file storage.
 
     Each user will automatically get their own credentials based on their user_id
     from the tool_context. This supports true multi-user scenarios where different
     users can use the same agent with their own Gmail accounts.
 
     Args:
-        client_id: Google OAuth client ID
-        client_secret: Google OAuth client secret
+        include: Optional list of tool names to include. If None, includes all tools.
+                 Available tools: 'search', 'get_content', 'send'
 
     Returns:
         List of configured Gmail tools ready to add to an ADK agent
 
-    Example:
-        >>> gmail_tools = create_gmail_tools(
-        ...     client_id="your-client-id",
-        ...     client_secret="your-client-secret"
-        ... )
-        >>>
-        >>> from google.adk.agents import Agent
-        >>> agent = Agent(
-        ...     name="EmailAssistant",
-        ...     tools=gmail_tools
-        ... )
-        >>>
-        >>> # User A calls agent -> uses User A's Gmail
-        >>> # User B calls agent -> uses User B's Gmail
-        >>> # Credentials are automatically isolated per user!
+    Examples:
+        >>> # Get all Gmail tools
+        >>> gmail_tools = create_gmail_tools()
+
+        >>> # Get only search and read tools (no send)
+        >>> gmail_tools = create_gmail_tools(include=['search', 'get_content'])
+
+        >>> # Get only send tool
+        >>> gmail_tools = create_gmail_tools(include=['send'])
     """
-    # Create credentials config
-    credentials_config = BaseGoogleCredentialsConfig(
-        client_id=client_id,
-        client_secret=client_secret,
-        scopes=list(set(BASE_SCOPES + [
-            GMAIL_SEND_SCOPE,
-            GMAIL_READONLY_SCOPE,
-            GMAIL_MODIFY_SCOPE,
-            GMAIL_COMPOSE_SCOPE,
-        ]))
+    # Define required scopes
+    scopes = list(
+        set(
+            BASE_SCOPES
+            + [
+                GMAIL_SEND_SCOPE,
+                GMAIL_READONLY_SCOPE,
+                GMAIL_MODIFY_SCOPE,
+                GMAIL_COMPOSE_SCOPE,
+            ]
+        )
     )
 
-    # Create tools
-    tools = [
-        PersistentGmailTool(
+    # Define all available tools
+    all_tools = {
+        'search': PersistentGmailTool(
             func=search_gmail_messages,
-            credentials_config=credentials_config,
+            scopes=scopes,
         ),
-        PersistentGmailTool(
+        'get_content': PersistentGmailTool(
             func=get_gmail_message_content,
-            credentials_config=credentials_config,
+            scopes=scopes,
         ),
-        PersistentGmailTool(
+        'send': PersistentGmailTool(
             func=send_gmail_message,
-            credentials_config=credentials_config,
+            scopes=scopes,
         ),
-    ]
+    }
 
-    return tools
+    # Filter tools based on include list
+    if include is None:
+        # Return all tools
+        return list(all_tools.values())
+    else:
+        # Return only requested tools
+        return [all_tools[name] for name in include if name in all_tools]

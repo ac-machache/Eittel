@@ -12,6 +12,7 @@ dependencies = [
     "google-auth-httplib2>=0.2.0",
     "google-api-python-client>=2.116.0",
     "redis",
+    "orjson>=3.11.4",
 ]
 
 [project.optional-dependencies]

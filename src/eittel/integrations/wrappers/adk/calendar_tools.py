@@ -2,155 +2,58 @@
 Calendar Tools for Google ADK
 
 This module provides ADK-compatible Calendar tools with persistent OAuth credential management.
+No experimental dependencies - production ready.
 """
 
-from typing import Optional, List, Dict, Any, Union
-from google.adk.tools.google_tool import GoogleTool
-from google.adk.tools._google_credentials import BaseGoogleCredentialsConfig
-from google.adk.tools.tool_context import ToolContext
-from googleapiclient.discovery import build
+from typing import Any, Dict, List, Optional
 
-from ...gsuite.gcalendar.client import CalendarClient
 from ...gsuite.auth import (
-    get_credential_store,
-    get_credential_cache,
-    CALENDAR_SCOPE,
-    CALENDAR_READONLY_SCOPE,
-    CALENDAR_EVENTS_SCOPE,
     BASE_SCOPES,
+    CALENDAR_EVENTS_SCOPE,
+    CALENDAR_READONLY_SCOPE,
+    CALENDAR_SCOPE,
 )
+from ...gsuite.gcalendar.client import CalendarClient
+from .base_google_tool import EittelGoogleTool
 
 
-class PersistentCalendarTool(GoogleTool):
+class PersistentCalendarTool(EittelGoogleTool):
     """
-    Base class for Calendar tools with persistent credential storage.
+    Calendar tool with persistent credential storage.
+
+    This tool loads pre-authorized credentials from Firestore/file storage.
+    Users must be authorized via your web application before using these tools.
 
     Features:
     - Credentials persist across sessions
     - Survives server restarts
     - L1 cache (memory) + L2 storage (file/Firestore)
     - Automatic token refresh
-    - Multi-user support (credentials isolated per user_id)
+    - Multi-user support
+    - No experimental ADK dependencies
     """
 
-    def __init__(
-        self,
-        func,
-        credentials_config: BaseGoogleCredentialsConfig,
-        tool_settings=None,
-    ):
+    def __init__(self, func, scopes: list[str]):
         """
         Initialize the persistent Calendar tool.
 
         Args:
             func: The tool function to execute
-            credentials_config: ADK credentials configuration
-            tool_settings: Optional tool settings
+            scopes: OAuth scopes required for Calendar access
         """
-        super().__init__(func, credentials_config=credentials_config, tool_settings=tool_settings)
-        # Hide the 'calendar' parameter from the agent (LLM doesn't need to see it)
-        self._ignore_params.append("calendar")
-        self.credential_store = get_credential_store()
-        self.credential_cache = get_credential_cache()
-
-    async def _get_valid_credentials(self, tool_context: ToolContext):
-        """
-        Get valid credentials using our persistent storage.
-
-        Flow:
-        1. Get actual user from tool_context
-        2. Check L1 cache (memory)
-        3. Check L2 storage (file/Firestore)
-        4. Try to refresh if expired
-        5. Fall back to ADK's OAuth flow if needed
-
-        Args:
-            tool_context: ADK tool context
-
-        Returns:
-            Valid credentials or None if OAuth flow is needed
-        """
-        # Get the actual user making this request
-        user_id = tool_context.invocation_context.user_id
-        if not user_id:
-            raise ValueError("Cannot identify user: tool_context.invocation_context.user_id is None")
-
-        # L1: Check in-memory cache
-        creds = self.credential_cache.get(user_id)
-        if creds and creds.valid:
-            return creds
-
-        # L2: Check persistent storage
-        creds = self.credential_store.get_credential(user_id)
-        if creds:
-            if creds.valid:
-                # Cache for next time
-                self.credential_cache.set(user_id, creds)
-                return creds
-
-            # Try to refresh
-            if creds.expired and creds.refresh_token:
-                try:
-                    from google.auth.transport.requests import Request
-                    creds.refresh(Request())
-                    # Save refreshed credentials
-                    self.credential_store.store_credential(user_id, creds)
-                    self.credential_cache.set(user_id, creds)
-                    return creds
-                except Exception as e:
-                    # Refresh failed, fall through to ADK OAuth
-                    pass
-
-        # L3: Use ADK's OAuth flow
-        creds = await self._credentials_manager.get_valid_credentials(tool_context)
-
-        # Save to our persistent storage
-        if creds:
-            self.credential_store.store_credential(user_id, creds)
-            self.credential_cache.set(user_id, creds)
-
-        return creds
-
-    async def run_async(self, args: dict, tool_context: ToolContext):
-        """
-        Execute the tool with credential handling.
-
-        Args:
-            args: Tool arguments from the agent
-            tool_context: ADK tool execution context
-
-        Returns:
-            Tool execution result
-        """
-        try:
-            # Get valid credentials
-            credentials = await self._get_valid_credentials(tool_context)
-
-            if credentials is None:
-                return (
-                    "User authorization is required to access Google Calendar. "
-                    "Please complete the authorization flow."
-                )
-
-            # Build Calendar service
-            service = build('calendar', 'v3', credentials=credentials)
-
-            # Create Calendar client
-            calendar_client = CalendarClient(service)
-
-            # Execute the tool function with the client
-            return await self.func(calendar_client, **args)
-
-        except Exception as ex:
-            return {
-                "status": "ERROR",
-                "error_details": str(ex),
-            }
+        super().__init__(
+            func=func,
+            scopes=scopes,
+            service_name="calendar",
+            service_version="v3",
+            hidden_param_name="calendar",
+        )
 
 
 # ==============================================================================
 # Calendar Tool Functions (What ADK registers and the agent sees)
 # ==============================================================================
+
 
 async def list_calendars(calendar: CalendarClient) -> str:
     """
@@ -166,11 +69,11 @@ async def list_calendars(calendar: CalendarClient) -> str:
 
 async def get_calendar_events(
     calendar: CalendarClient,
-    calendar_id: str = "primary",
-    max_results: int = 10,
+    calendar_id: str,
+    max_results: int,
     time_min: Optional[str] = None,
     time_max: Optional[str] = None,
-    query: Optional[str] = None
+    query: Optional[str] = None,
 ) -> str:
     """
     Get events from a calendar within a time range.
@@ -190,12 +93,16 @@ async def get_calendar_events(
         - Get events for March: get_calendar_events(time_min="2024-03-01T00:00:00Z", time_max="2024-04-01T00:00:00Z")
         - Search meetings: get_calendar_events(query="team meeting")
     """
+    if not calendar_id:
+        calendar_id = "primary"
+    if not max_results:
+        max_results = 10
     return await calendar.get_events(
         calendar_id=calendar_id,
         max_results=max_results,
         time_min=time_min,
         time_max=time_max,
-        query=query
+        query=query,
     )
 
 
@@ -204,12 +111,12 @@ async def create_calendar_event(
     summary: str,
     start_time: str,
     end_time: str,
-    calendar_id: str = "primary",
+    calendar_id: str,
     description: Optional[str] = None,
     location: Optional[str] = None,
     attendees: Optional[List[str]] = None,
     timezone: Optional[str] = None,
-    reminders: Optional[Union[str, List[Dict[str, Any]]]] = None
+    reminders: Optional[str] = None,
 ) -> str:
     """
     Create a new calendar event.
@@ -223,7 +130,7 @@ async def create_calendar_event(
         location: Event location (optional)
         attendees: List of attendee email addresses (optional)
         timezone: Timezone for the event (e.g., "America/New_York", "Europe/London") - optional
-        reminders: Event reminders as JSON string or list of dicts with 'method' and 'minutes' (optional)
+        reminders: Event reminders as JSON string (e.g., '{"useDefault": false, "overrides": [{"method": "email", "minutes": 30}]}') (optional)
 
     Returns:
         Success message with event ID and calendar link
@@ -247,6 +154,9 @@ async def create_calendar_event(
               location="Conference Room A"
           )
     """
+
+    if not calendar_id:
+        calendar_id = "primary"
     return await calendar.create_event(
         summary=summary,
         start_time=start_time,
@@ -256,14 +166,12 @@ async def create_calendar_event(
         location=location,
         attendees=attendees,
         timezone=timezone,
-        reminders=reminders
+        reminders=reminders,
     )
 
 
 async def delete_calendar_event(
-    calendar: CalendarClient,
-    event_id: str,
-    calendar_id: str = "primary"
+    calendar: CalendarClient, event_id: str, calendar_id: str
 ) -> str:
     """
     Delete a calendar event.
@@ -278,74 +186,80 @@ async def delete_calendar_event(
     Example:
         delete_calendar_event(event_id="abc123xyz")
     """
-    return await calendar.delete_event(
-        event_id=event_id,
-        calendar_id=calendar_id
-    )
+    if not calendar_id:
+        calendar_id = "primary"
+    return await calendar.delete_event(event_id=event_id, calendar_id=calendar_id)
 
 
 # ==============================================================================
 # Tool Registration Helper
 # ==============================================================================
 
-def create_calendar_tools(
-    client_id: str,
-    client_secret: str
-) -> list:
+
+def create_calendar_tools(include: Optional[List[str]] = None) -> list:
     """
     Create Calendar tools for ADK with persistent credential storage.
 
+    Users must be pre-authorized via your web application. This function
+    creates tools that load existing credentials from Firestore/file storage.
+
     Each user will automatically get their own credentials based on their user_id
-    from the tool_context. This supports true multi-user scenarios.
+    from the tool_context. This supports true multi-user scenarios where different
+    users can use the same agent with their own Google Calendar accounts.
 
     Args:
-        client_id: Google OAuth client ID
-        client_secret: Google OAuth client secret
+        include: Optional list of tool names to include. If None, includes all tools.
+                 Available tools: 'list', 'get_events', 'create', 'delete'
 
     Returns:
         List of configured Calendar tools ready to add to an ADK agent
 
-    Example:
-        >>> calendar_tools = create_calendar_tools(
-        ...     client_id="your-client-id",
-        ...     client_secret="your-client-secret"
-        ... )
-        >>>
-        >>> from google.adk.agents import Agent
-        >>> agent = Agent(
-        ...     name="CalendarAssistant",
-        ...     tools=calendar_tools
-        ... )
+    Examples:
+        >>> # Get all Calendar tools
+        >>> calendar_tools = create_calendar_tools()
+
+        >>> # Get only read tools (no create/delete)
+        >>> calendar_tools = create_calendar_tools(include=['list', 'get_events'])
+
+        >>> # Get only create tool
+        >>> calendar_tools = create_calendar_tools(include=['create'])
     """
-    # Create credentials config
-    credentials_config = BaseGoogleCredentialsConfig(
-        client_id=client_id,
-        client_secret=client_secret,
-        scopes=list(set(BASE_SCOPES + [
-            CALENDAR_SCOPE,
-            CALENDAR_READONLY_SCOPE,
-            CALENDAR_EVENTS_SCOPE,
-        ]))
+    # Define required scopes
+    scopes = list(
+        set(
+            BASE_SCOPES
+            + [
+                CALENDAR_SCOPE,
+                CALENDAR_READONLY_SCOPE,
+                CALENDAR_EVENTS_SCOPE,
+            ]
+        )
     )
 
-    # Create tools
-    tools = [
-        PersistentCalendarTool(
+    # Define all available tools
+    all_tools = {
+        'list': PersistentCalendarTool(
             func=list_calendars,
-            credentials_config=credentials_config,
+            scopes=scopes,
         ),
-        PersistentCalendarTool(
+        'get_events': PersistentCalendarTool(
             func=get_calendar_events,
-            credentials_config=credentials_config,
+            scopes=scopes,
         ),
-        PersistentCalendarTool(
+        'create': PersistentCalendarTool(
             func=create_calendar_event,
-            credentials_config=credentials_config,
+            scopes=scopes,
         ),
-        PersistentCalendarTool(
+        'delete': PersistentCalendarTool(
             func=delete_calendar_event,
-            credentials_config=credentials_config,
+            scopes=scopes,
         ),
-    ]
+    }
 
-    return tools
+    # Filter tools based on include list
+    if include is None:
+        # Return all tools
+        return list(all_tools.values())
+    else:
+        # Return only requested tools
+        return [all_tools[name] for name in include if name in all_tools]

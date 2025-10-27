@@ -28,11 +28,13 @@ class FirestoreCredentialStore(CredentialStore):
     Environment Variables:
         FIRESTORE_PROJECT: GCP project ID (required)
         FIRESTORE_DATABASE: Firestore database name (optional, defaults to "(default)")
+        FIRESTORE_COLLECTION: Collection name for credentials (optional, defaults to "technico")
+        FIRESTORE_TOKEN_FIELD: Field name for OAuth tokens (optional, defaults to "google_oauth_tokens")
 
     Firestore Structure:
-        Collection: technico
+        Collection: {FIRESTORE_COLLECTION} (default: technico)
         Document: {user_id}
-        Field: google_oauth_tokens
+        Field: {FIRESTORE_TOKEN_FIELD} (default: google_oauth_tokens)
             {
                 "token": "access_token",
                 "refresh_token": "refresh_token",
@@ -67,8 +69,11 @@ class FirestoreCredentialStore(CredentialStore):
         # Get database from parameter, environment, or use default
         self.database = firestore_database or os.getenv("FIRESTORE_DATABASE", "(default)")
 
-        # Collection name (matches your existing structure)
-        self.collection_name = "technico"
+        # Collection name (configurable via environment)
+        self.collection_name = os.getenv("FIRESTORE_COLLECTION", "technico")
+
+        # Token field name (configurable via environment)
+        self.token_field = os.getenv("FIRESTORE_TOKEN_FIELD", "google_oauth_tokens")
 
         # Initialize Firestore client
         try:
@@ -78,7 +83,8 @@ class FirestoreCredentialStore(CredentialStore):
             )
             logger.info(
                 f"Initialized Firestore credential store: "
-                f"project={self.project}, database={self.database}, collection={self.collection_name}"
+                f"project={self.project}, database={self.database}, "
+                f"collection={self.collection_name}, token_field={self.token_field}"
             )
         except Exception as e:
             # Provide context-specific error messages
@@ -153,10 +159,10 @@ class FirestoreCredentialStore(CredentialStore):
                 logger.debug(f"Firestore document exists but is empty for user: {user_email}")
                 return None
 
-            # Extract token data from google_oauth_tokens field
-            token_data = data.get("google_oauth_tokens")
+            # Extract token data from configured token field
+            token_data = data.get(self.token_field)
             if not token_data:
-                logger.debug(f"No google_oauth_tokens field found for user: {user_email}")
+                logger.debug(f"No {self.token_field} field found for user: {user_email}")
                 return None
 
             # Validate token data structure
@@ -244,8 +250,8 @@ class FirestoreCredentialStore(CredentialStore):
             # Store with merge=True to preserve other fields in the document
             doc_ref.set(
                 {
-                    "google_oauth_tokens": token_data,
-                    "google_oauth_connected_at": datetime.utcnow().isoformat(),
+                    self.token_field: token_data,
+                    f"{self.token_field}_connected_at": datetime.utcnow().isoformat(),
                 },
                 merge=True,
             )
@@ -287,7 +293,7 @@ class FirestoreCredentialStore(CredentialStore):
         """
         Delete OAuth credentials from Firestore for a user.
 
-        This removes the google_oauth_tokens field from the user's document
+        This removes the token field from the user's document
         but preserves other fields in the document.
 
         Args:
@@ -310,11 +316,11 @@ class FirestoreCredentialStore(CredentialStore):
                 logger.debug(f"No document to delete for user: {user_email}")
                 return True  # Consider it success if document doesn't exist
 
-            # Remove the google_oauth_tokens field (preserve other fields)
+            # Remove the token field (preserve other fields)
             doc_ref.update(
                 {
-                    "google_oauth_tokens": firestore.DELETE_FIELD,
-                    "google_oauth_connected_at": firestore.DELETE_FIELD,
+                    self.token_field: firestore.DELETE_FIELD,
+                    f"{self.token_field}_connected_at": firestore.DELETE_FIELD,
                 }
             )
 
@@ -348,7 +354,7 @@ class FirestoreCredentialStore(CredentialStore):
         List all users with stored OAuth credentials in Firestore.
 
         Returns:
-            List of user identifiers (document IDs) that have google_oauth_tokens
+            List of user identifiers (document IDs) that have OAuth tokens
         """
         try:
             users = []
@@ -358,8 +364,8 @@ class FirestoreCredentialStore(CredentialStore):
 
             for doc in docs:
                 data = doc.to_dict()
-                # Only include users that have the google_oauth_tokens field
-                if data and data.get("google_oauth_tokens"):
+                # Only include users that have the token field
+                if data and data.get(self.token_field):
                     users.append(doc.id)
 
             logger.info(f"Listed {len(users)} users with OAuth credentials from Firestore")
