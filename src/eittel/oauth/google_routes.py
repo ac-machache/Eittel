@@ -29,7 +29,8 @@ router = APIRouter(prefix="/auth/google", tags=["Google OAuth"])
 
 
 # Environment variables - Load once at module level
-UPSTASH_REDIS_URL = os.getenv("UPSTASH_REDIS_URL")
+# Support both UPSTASH_REDIS_URL and REDIS_URL for backwards compatibility
+UPSTASH_REDIS_URL = os.getenv("UPSTASH_REDIS_URL") or os.getenv("REDIS_URL")
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
 GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI")
@@ -43,9 +44,10 @@ def get_redis_client() -> Redis:
     """Get Redis client for OAuth state storage.
 
     Uses Upstash Redis with native Redis protocol (not REST API).
+    Supports both UPSTASH_REDIS_URL and REDIS_URL environment variables.
     """
     if not UPSTASH_REDIS_URL:
-        raise ValueError("UPSTASH_REDIS_URL environment variable not set")
+        raise ValueError("UPSTASH_REDIS_URL or REDIS_URL environment variable not set")
 
     return Redis.from_url(
         UPSTASH_REDIS_URL,
