@@ -7,10 +7,10 @@ This package provides:
 - Token storage and refresh
 """
 
-from oauth.google_routes import router as google_oauth_router
-from oauth.state_storage import OAuthStateStorage
-from oauth.firebase_auth import verify_firebase_token
-from oauth.oauth_manager import GoogleOAuthManager, FirestoreTokenStorage
+from .google_routes import router as google_oauth_router
+from .state_storage import OAuthStateStorage
+from .firebase_auth import verify_firebase_token
+from .oauth_manager import GoogleOAuthManager, FirestoreTokenStorage
 
 __all__ = [
     "google_oauth_router",
