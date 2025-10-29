@@ -5,10 +5,9 @@ from __future__ import annotations
 from typing import Optional
 from fastapi import HTTPException, Header, Depends
 from firebase_admin import auth
+import logging
 
-from utils.logging import get_logger
-
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 async def verify_firebase_token(

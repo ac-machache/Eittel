@@ -16,12 +16,12 @@ from fastapi.responses import RedirectResponse, JSONResponse
 from google.cloud import firestore
 from redis import Redis
 
-from oauth.oauth_manager import (
+from .oauth_manager import (
     GoogleOAuthManager,
     FirestoreTokenStorage,
 )
-from oauth.firebase_auth import verify_firebase_token
-from oauth.state_storage import OAuthStateStorage
+from .firebase_auth import verify_firebase_token
+from .state_storage import OAuthStateStorage
 
 logger = logging.getLogger(__name__)
 
