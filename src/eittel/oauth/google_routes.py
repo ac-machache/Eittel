@@ -225,6 +225,7 @@ async def oauth_callback(
 @router.get("/status")
 async def oauth_status(
     user_id: str = Depends(verify_firebase_token),
+    token_storage: FirestoreTokenStorage = Depends(get_token_storage),
 ):
     """Check if user has connected Google Calendar and Gmail.
 
@@ -249,7 +250,6 @@ async def oauth_status(
         JSON with connection status and scope information
     """
     try:
-        token_storage = get_token_storage()
         tokens = token_storage.get_tokens(user_id)
 
         if not tokens:
@@ -282,6 +282,7 @@ async def oauth_status(
 @router.post("/refresh")
 async def refresh_tokens(
     user_id: str = Depends(verify_firebase_token),
+    token_storage: FirestoreTokenStorage = Depends(get_token_storage),
 ):
     """Manually refresh OAuth tokens for the authenticated user.
 
@@ -307,7 +308,6 @@ async def refresh_tokens(
         JSON with refresh status
     """
     try:
-        token_storage = get_token_storage()
         tokens = token_storage.get_tokens(user_id)
 
         if not tokens:
@@ -349,6 +349,7 @@ async def refresh_tokens(
 @router.post("/disconnect")
 async def disconnect_oauth(
     user_id: str = Depends(verify_firebase_token),
+    token_storage: FirestoreTokenStorage = Depends(get_token_storage),
 ):
     """Disconnect Google Calendar and Gmail integration.
 
@@ -376,7 +377,6 @@ async def disconnect_oauth(
         Success message
     """
     try:
-        token_storage = get_token_storage()
         tokens = token_storage.get_tokens(user_id)
 
         # Try to revoke tokens with Google
