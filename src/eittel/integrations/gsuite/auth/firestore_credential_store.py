@@ -129,46 +129,46 @@ class FirestoreCredentialStore(CredentialStore):
             logger.error(error_msg, exc_info=True)
             raise RuntimeError(error_msg) from e
 
-    def get_credential(self, user_email: str) -> Optional[Credentials]:
+    def get_credential(self, user_id: str) -> Optional[Credentials]:
         """
         Load OAuth credentials from Firestore for a user.
 
         Args:
-            user_email: User identifier (used as document ID in Firestore)
+            user_id: User identifier (used as document ID in Firestore)
 
         Returns:
             Google Credentials object or None if not found or on error
         """
-        if not user_email or not user_email.strip():
-            logger.warning("get_credential called with empty user_email")
+        if not user_id or not user_id.strip():
+            logger.warning("get_credential called with empty user_id")
             return None
 
         try:
             # Get document reference
-            doc_ref = self.db.collection(self.collection_name).document(user_email)
+            doc_ref = self.db.collection(self.collection_name).document(user_id)
             doc = doc_ref.get()
 
             # Check if document exists
             if not doc.exists:
-                logger.debug(f"No Firestore document found for user: {user_email}")
+                logger.debug(f"No Firestore document found for user: {user_id}")
                 return None
 
             # Get document data
             data = doc.to_dict()
             if not data:
-                logger.debug(f"Firestore document exists but is empty for user: {user_email}")
+                logger.debug(f"Firestore document exists but is empty for user: {user_id}")
                 return None
 
             # Extract token data from configured token field
             token_data = data.get(self.token_field)
             if not token_data:
-                logger.debug(f"No {self.token_field} field found for user: {user_email}")
+                logger.debug(f"No {self.token_field} field found for user: {user_id}")
                 return None
 
             # Validate token data structure
             if not isinstance(token_data, dict):
                 logger.warning(
-                    f"Invalid token data type for user {user_email}: "
+                    f"Invalid token data type for user {user_id}: "
                     f"expected dict, got {type(token_data).__name__}"
                 )
                 return None
@@ -178,11 +178,11 @@ class FirestoreCredentialStore(CredentialStore):
 
             if credentials:
                 logger.info(
-                    f"Loaded OAuth credentials from Firestore for user: {user_email} "
+                    f"Loaded OAuth credentials from Firestore for user: {user_id} "
                     f"(expired={credentials.expired})"
                 )
             else:
-                logger.warning(f"Failed to convert token data to credentials for user: {user_email}")
+                logger.warning(f"Failed to convert token data to credentials for user: {user_id}")
 
             return credentials
 
@@ -192,47 +192,47 @@ class FirestoreCredentialStore(CredentialStore):
             # Provide context-specific error messages for common issues
             if "permission" in error_str or "forbidden" in error_str:
                 logger.error(
-                    f"Permission denied when loading credentials for user {user_email}: {e}. "
+                    f"Permission denied when loading credentials for user {user_id}: {e}. "
                     f"Check Firestore IAM permissions.",
                     exc_info=True,
                 )
             elif "timeout" in error_str or "deadline" in error_str:
                 logger.error(
-                    f"Timeout loading credentials for user {user_email}: {e}. "
+                    f"Timeout loading credentials for user {user_id}: {e}. "
                     f"Firestore may be experiencing latency issues.",
                     exc_info=True,
                 )
             elif "unavailable" in error_str or "service unavailable" in error_str:
                 logger.error(
-                    f"Firestore service unavailable when loading credentials for user {user_email}: {e}. "
+                    f"Firestore service unavailable when loading credentials for user {user_id}: {e}. "
                     f"This may be a temporary outage.",
                     exc_info=True,
                 )
             else:
                 logger.error(
-                    f"Error loading credentials from Firestore for user {user_email}: {e}",
+                    f"Error loading credentials from Firestore for user {user_id}: {e}",
                     exc_info=True,
                 )
 
             return None
 
-    def store_credential(self, user_email: str, credentials: Credentials) -> bool:
+    def store_credential(self, user_id: str, credentials: Credentials) -> bool:
         """
         Save OAuth credentials to Firestore for a user.
 
         Args:
-            user_email: User identifier (used as document ID in Firestore)
+            user_id: User identifier (used as document ID in Firestore)
             credentials: Google Credentials object to store
 
         Returns:
             True if successfully stored, False otherwise
         """
-        if not user_email or not user_email.strip():
-            logger.warning("store_credential called with empty user_email")
+        if not user_id or not user_id.strip():
+            logger.warning("store_credential called with empty user_id")
             return False
 
         if not credentials:
-            logger.warning(f"store_credential called with None credentials for user: {user_email}")
+            logger.warning(f"store_credential called with None credentials for user: {user_id}")
             return False
 
         try:
@@ -241,11 +241,11 @@ class FirestoreCredentialStore(CredentialStore):
 
             # Validate that we have required fields
             if not token_data.get("token"):
-                logger.error(f"Cannot store credentials for user {user_email}: missing access token")
+                logger.error(f"Cannot store credentials for user {user_id}: missing access token")
                 return False
 
             # Get document reference
-            doc_ref = self.db.collection(self.collection_name).document(user_email)
+            doc_ref = self.db.collection(self.collection_name).document(user_id)
 
             # Store with merge=True to preserve other fields in the document
             doc_ref.set(
@@ -256,7 +256,7 @@ class FirestoreCredentialStore(CredentialStore):
                 merge=True,
             )
 
-            logger.info(f"Stored OAuth credentials to Firestore for user: {user_email}")
+            logger.info(f"Stored OAuth credentials to Firestore for user: {user_id}")
             return True
 
         except Exception as e:
@@ -265,31 +265,31 @@ class FirestoreCredentialStore(CredentialStore):
             # Provide context-specific error messages
             if "permission" in error_str or "forbidden" in error_str:
                 logger.error(
-                    f"Permission denied when storing credentials for user {user_email}: {e}. "
+                    f"Permission denied when storing credentials for user {user_id}: {e}. "
                     f"Check Firestore IAM write permissions.",
                     exc_info=True,
                 )
             elif "timeout" in error_str or "deadline" in error_str:
                 logger.error(
-                    f"Timeout storing credentials for user {user_email}: {e}. "
+                    f"Timeout storing credentials for user {user_id}: {e}. "
                     f"Firestore may be experiencing latency issues.",
                     exc_info=True,
                 )
             elif "quota" in error_str or "rate limit" in error_str:
                 logger.error(
-                    f"Quota exceeded when storing credentials for user {user_email}: {e}. "
+                    f"Quota exceeded when storing credentials for user {user_id}: {e}. "
                     f"Check Firestore quota limits.",
                     exc_info=True,
                 )
             else:
                 logger.error(
-                    f"Error storing credentials to Firestore for user {user_email}: {e}",
+                    f"Error storing credentials to Firestore for user {user_id}: {e}",
                     exc_info=True,
                 )
 
             return False
 
-    def delete_credential(self, user_email: str) -> bool:
+    def delete_credential(self, user_id: str) -> bool:
         """
         Delete OAuth credentials from Firestore for a user.
 
@@ -297,23 +297,23 @@ class FirestoreCredentialStore(CredentialStore):
         but preserves other fields in the document.
 
         Args:
-            user_email: User identifier (used as document ID in Firestore)
+            user_id: User identifier (used as document ID in Firestore)
 
         Returns:
             True if successfully deleted or not found, False on error
         """
-        if not user_email or not user_email.strip():
-            logger.warning("delete_credential called with empty user_email")
+        if not user_id or not user_id.strip():
+            logger.warning("delete_credential called with empty user_id")
             return False
 
         try:
             # Get document reference
-            doc_ref = self.db.collection(self.collection_name).document(user_email)
+            doc_ref = self.db.collection(self.collection_name).document(user_id)
 
             # Check if document exists
             doc = doc_ref.get()
             if not doc.exists:
-                logger.debug(f"No document to delete for user: {user_email}")
+                logger.debug(f"No document to delete for user: {user_id}")
                 return True  # Consider it success if document doesn't exist
 
             # Remove the token field (preserve other fields)
@@ -324,7 +324,7 @@ class FirestoreCredentialStore(CredentialStore):
                 }
             )
 
-            logger.info(f"Deleted OAuth credentials from Firestore for user: {user_email}")
+            logger.info(f"Deleted OAuth credentials from Firestore for user: {user_id}")
             return True
 
         except Exception as e:
@@ -333,17 +333,17 @@ class FirestoreCredentialStore(CredentialStore):
             # Provide context-specific error messages
             if "permission" in error_str or "forbidden" in error_str:
                 logger.error(
-                    f"Permission denied when deleting credentials for user {user_email}: {e}. "
+                    f"Permission denied when deleting credentials for user {user_id}: {e}. "
                     f"Check Firestore IAM write permissions.",
                     exc_info=True,
                 )
             elif "not found" in error_str:
                 # Document was deleted between get() and update() calls
-                logger.info(f"Document not found when deleting credentials for user {user_email} (already deleted)")
+                logger.info(f"Document not found when deleting credentials for user {user_id} (already deleted)")
                 return True
             else:
                 logger.error(
-                    f"Error deleting credentials from Firestore for user {user_email}: {e}",
+                    f"Error deleting credentials from Firestore for user {user_id}: {e}",
                     exc_info=True,
                 )
 

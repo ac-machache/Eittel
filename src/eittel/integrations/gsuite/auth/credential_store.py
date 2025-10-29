@@ -20,12 +20,12 @@ class CredentialStore(ABC):
     """Abstract base class for credential storage."""
 
     @abstractmethod
-    def get_credential(self, user_email: str) -> Optional[Credentials]:
+    def get_credential(self, user_id: str) -> Optional[Credentials]:
         """
-        Get credentials for a user by email.
+        Get credentials for a user by user ID.
 
         Args:
-            user_email: User's email address
+            user_id: User identifier (e.g., Firebase UID, email, etc.)
 
         Returns:
             Google Credentials object or None if not found
@@ -33,12 +33,12 @@ class CredentialStore(ABC):
         pass
 
     @abstractmethod
-    def store_credential(self, user_email: str, credentials: Credentials) -> bool:
+    def store_credential(self, user_id: str, credentials: Credentials) -> bool:
         """
         Store credentials for a user.
 
         Args:
-            user_email: User's email address
+            user_id: User identifier (e.g., Firebase UID, email, etc.)
             credentials: Google Credentials object to store
 
         Returns:
@@ -47,12 +47,12 @@ class CredentialStore(ABC):
         pass
 
     @abstractmethod
-    def delete_credential(self, user_email: str) -> bool:
+    def delete_credential(self, user_id: str) -> bool:
         """
         Delete credentials for a user.
 
         Args:
-            user_email: User's email address
+            user_id: User identifier (e.g., Firebase UID, email, etc.)
 
         Returns:
             True if successfully deleted, False otherwise
@@ -65,7 +65,7 @@ class CredentialStore(ABC):
         List all users with stored credentials.
 
         Returns:
-            List of user email addresses
+            List of user identifiers
         """
         pass
 
@@ -98,19 +98,19 @@ class LocalDirectoryCredentialStore(CredentialStore):
         self.base_dir = base_dir
         logger.info(f"LocalJsonCredentialStore initialized with base_dir: {base_dir}")
 
-    def _get_credential_path(self, user_email: str) -> str:
+    def _get_credential_path(self, user_id: str) -> str:
         """Get the file path for a user's credentials."""
         if not os.path.exists(self.base_dir):
             os.makedirs(self.base_dir)
             logger.info(f"Created credentials directory: {self.base_dir}")
-        return os.path.join(self.base_dir, f"{user_email}.json")
+        return os.path.join(self.base_dir, f"{user_id}.json")
 
-    def get_credential(self, user_email: str) -> Optional[Credentials]:
+    def get_credential(self, user_id: str) -> Optional[Credentials]:
         """Get credentials from local JSON file."""
-        creds_path = self._get_credential_path(user_email)
+        creds_path = self._get_credential_path(user_id)
 
         if not os.path.exists(creds_path):
-            logger.debug(f"No credential file found for {user_email} at {creds_path}")
+            logger.debug(f"No credential file found for {user_id} at {creds_path}")
             return None
 
         try:
@@ -126,7 +126,7 @@ class LocalDirectoryCredentialStore(CredentialStore):
                     if expiry.tzinfo is not None:
                         expiry = expiry.replace(tzinfo=None)
                 except (ValueError, TypeError) as e:
-                    logger.warning(f"Could not parse expiry time for {user_email}: {e}")
+                    logger.warning(f"Could not parse expiry time for {user_id}: {e}")
 
             credentials = Credentials(
                 token=creds_data.get("token"),
@@ -138,18 +138,18 @@ class LocalDirectoryCredentialStore(CredentialStore):
                 expiry=expiry,
             )
 
-            logger.debug(f"Loaded credentials for {user_email} from {creds_path}")
+            logger.debug(f"Loaded credentials for {user_id} from {creds_path}")
             return credentials
 
         except (IOError, json.JSONDecodeError, KeyError) as e:
             logger.error(
-                f"Error loading credentials for {user_email} from {creds_path}: {e}"
+                f"Error loading credentials for {user_id} from {creds_path}: {e}"
             )
             return None
 
-    def store_credential(self, user_email: str, credentials: Credentials) -> bool:
+    def store_credential(self, user_id: str, credentials: Credentials) -> bool:
         """Store credentials to local JSON file."""
-        creds_path = self._get_credential_path(user_email)
+        creds_path = self._get_credential_path(user_id)
 
         creds_data = {
             "token": credentials.token,
@@ -164,31 +164,31 @@ class LocalDirectoryCredentialStore(CredentialStore):
         try:
             with open(creds_path, "w") as f:
                 json.dump(creds_data, f, indent=2)
-            logger.info(f"Stored credentials for {user_email} to {creds_path}")
+            logger.info(f"Stored credentials for {user_id} to {creds_path}")
             return True
         except IOError as e:
             logger.error(
-                f"Error storing credentials for {user_email} to {creds_path}: {e}"
+                f"Error storing credentials for {user_id} to {creds_path}: {e}"
             )
             return False
 
-    def delete_credential(self, user_email: str) -> bool:
+    def delete_credential(self, user_id: str) -> bool:
         """Delete credential file for a user."""
-        creds_path = self._get_credential_path(user_email)
+        creds_path = self._get_credential_path(user_id)
 
         try:
             if os.path.exists(creds_path):
                 os.remove(creds_path)
-                logger.info(f"Deleted credentials for {user_email} from {creds_path}")
+                logger.info(f"Deleted credentials for {user_id} from {creds_path}")
                 return True
             else:
                 logger.debug(
-                    f"No credential file to delete for {user_email} at {creds_path}"
+                    f"No credential file to delete for {user_id} at {creds_path}"
                 )
                 return True  # Consider it a success if file doesn't exist
         except IOError as e:
             logger.error(
-                f"Error deleting credentials for {user_email} from {creds_path}: {e}"
+                f"Error deleting credentials for {user_id} from {creds_path}: {e}"
             )
             return False
 
